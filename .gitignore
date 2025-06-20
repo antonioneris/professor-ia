@@ -22,7 +22,7 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
-.db-data/*
+db-data/    
 
 # Virtual Environment
 venv/
