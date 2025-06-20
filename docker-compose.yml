@@ -1,0 +1,68 @@
+version: '3.8'
+
+networks:
+  # enable connection with Traefik
+  traefik:
+    external: true
+  backend:
+    driver: bridge
+
+services:
+  db:
+    image: 'postgres:15-alpine'
+    container_name: professor-ai-db
+    hostname: db
+    ports:
+      - '5432:5432'
+    environment:
+      POSTGRES_DB: 'professor_ai_db'
+      POSTGRES_USER: 'professor_ai'
+      POSTGRES_PASSWORD: 'professor@123'
+    volumes:
+      - ./db-data:/var/lib/postgresql/data
+    networks:
+      - "backend"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U professor_ai -d professor_ai_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  web:
+    build: .
+    container_name: professor-ai-web
+    hostname: web
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
+      - ./logs:/app/logs
+    environment:
+      - DEBUG=True
+      - POSTGRES_DB=professor_ai_db
+      - POSTGRES_USER=professor_ai
+      - POSTGRES_PASSWORD=professor@123
+      - DATABASE_URL=postgresql+asyncpg://professor_ai:professor%40123@professor-ai-db:5432/professor_ai_db
+    env_file:
+      - .env
+    labels:
+      # Traefik configuration
+      - "traefik.enable=true"
+      - "traefik.docker.network=traefik"
+      # HTTP configuration
+      - "traefik.http.routers.professor-ai.rule=Host(`professor.3ndigital.com.br`)"
+      - "traefik.http.routers.professor-ai.entrypoints=web"
+      # Redirect to HTTPS
+      - "traefik.http.middlewares.redirect-to-https.redirectscheme.scheme=https"
+      - "traefik.http.routers.professor-ai.middlewares=redirect-to-https@docker"
+      # HTTPS configuration
+      - "traefik.http.routers.professor-ai-secured.rule=Host(`professor.3ndigital.com.br`)"
+      - "traefik.http.routers.professor-ai-secured.entrypoints=web-secure"
+      - "traefik.http.routers.professor-ai-secured.tls=true"
+      - "traefik.http.routers.professor-ai-secured.tls.certresolver=myhttpchallenge"
+    networks:
+      - "traefik"
+      - "backend"
+    depends_on:
+      db:
+        condition: service_healthy 
