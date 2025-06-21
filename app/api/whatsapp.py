@@ -709,105 +709,163 @@ async def webhook(request: Request, db: AsyncSession = Depends(get_db)) -> Dict:
             # Store incoming message
             await store_message(db, conversation, message_text, MessageType.INCOMING)
             
-            # Process topic selection
-            topic_selection = message_text.strip().lower()
+            # Check if this is a topic selection only for recent assessment completions
+            is_topic_selection = False
             
-            # Map both numbers and text to topics
-            topic_map = {
-                "1": "daily_conversations",
-                "2": "grammar",
-                "3": "vocabulary",
-                "4": "pronunciation",
-                "5": "writing",
-                "daily": "daily_conversations",
-                "conversations": "daily_conversations",
-                "grammar": "grammar",
-                "vocabulary": "vocabulary",
-                "pronunciation": "pronunciation",
-                "writing": "writing"
-            }
+            # Get the last few messages to check if we just completed assessment
+            recent_messages_query = select(Message).where(
+                Message.conversation_id == conversation.id
+            ).order_by(Message.timestamp.desc()).limit(3)
             
-            selected_topic = None
-            for key, value in topic_map.items():
-                if key in topic_selection:
-                    selected_topic = value
-                    break
+            recent_result = await db.execute(recent_messages_query)
+            recent_messages = recent_result.scalars().all()
             
-            if selected_topic:
-                # Handle pronunciation practice
-                if selected_topic == "pronunciation":
-                    response = (
-                        "Great choice! Let's work on your pronunciation. 🗣️\n\n"
-                        "I'll help you improve your pronunciation through:\n"
-                        "1. Word-by-word practice\n"
-                        "2. Sentence rhythm and intonation\n"
-                        "3. Common sound pairs\n\n"
-                        "Let's start with some common words that English learners often find challenging.\n\n"
-                        "Please say these words (you can send an audio message):\n"
-                        "- 'Think' vs 'Sink'\n"
-                        "- 'Three' vs 'Tree'\n"
-                        "- 'Ship' vs 'Sheep'\n\n"
-                        "I'll listen and give you feedback on your pronunciation!"
-                    )
-                elif selected_topic == "daily_conversations":
-                    response = (
-                        "Let's practice daily conversations! 💬\n\n"
-                        "We'll focus on common situations like:\n"
-                        "- Ordering food\n"
-                        "- Shopping\n"
-                        "- Asking for directions\n\n"
-                        "Let's start with introductions. How would you introduce yourself to someone you just met?"
-                    )
-                elif selected_topic == "grammar":
-                    response = (
-                        "Time to improve your grammar! 📚\n\n"
-                        "We'll work on:\n"
-                        "- Present tense\n"
-                        "- Past tense\n"
-                        "- Question formation\n\n"
-                        "Let's start with a simple exercise. Complete this sentence:\n"
-                        "Yesterday, I _____ (go) to the store."
-                    )
-                elif selected_topic == "vocabulary":
-                    response = (
-                        "Let's expand your vocabulary! 📖\n\n"
-                        "We'll learn new words through:\n"
-                        "- Themes and categories\n"
-                        "- Context and usage\n"
-                        "- Word families\n\n"
-                        "Today's theme is 'Food and Cooking'\n"
-                        "What are some foods you like to cook?"
-                    )
-                elif selected_topic == "writing":
-                    response = (
-                        "Let's improve your writing skills! ✍️\n\n"
-                        "We'll practice:\n"
-                        "- Sentence structure\n"
-                        "- Paragraph organization\n"
-                        "- Email writing\n\n"
-                        "Let's start with a simple task:\n"
-                        "Write 3-4 sentences about your favorite hobby."
-                    )
+            # Check if the last outgoing message was the assessment completion message
+            if recent_messages:
+                last_outgoing = None
+                for msg in recent_messages:
+                    if msg.message_type == MessageType.OUTGOING:
+                        last_outgoing = msg
+                        break
                 
-                await store_message(db, conversation, response, MessageType.OUTGOING)
-                
-                try:
-                    whatsapp_service.send_message(whatsapp_id, response)
-                except WhatsAppPermissionError as e:
-                    logger.warning(f"WhatsApp permission error (expected during development): {str(e)}")
-                except Exception as e:
-                    logger.error(f"Error sending topic response: {str(e)}")
-                
-                await db.commit()
-                return JSONResponse(
-                    status_code=200,
-                    content={"status": "success", "action": "topic_selected"}
-                )
+                if last_outgoing and "Assessment completed" in last_outgoing.content:
+                    # This might be a topic selection
+                    topic_selection = message_text.strip().lower()
+                    
+                    # Map both numbers and text to topics
+                    topic_map = {
+                        "1": "daily_conversations",
+                        "2": "grammar",
+                        "3": "vocabulary",
+                        "4": "pronunciation",
+                        "5": "writing",
+                        "daily": "daily_conversations",
+                        "conversations": "daily_conversations",
+                        "grammar": "grammar",
+                        "vocabulary": "vocabulary",
+                        "pronunciation": "pronunciation",
+                        "writing": "writing"
+                    }
+                    
+                    selected_topic = None
+                    for key, value in topic_map.items():
+                        if key in topic_selection:
+                            selected_topic = value
+                            is_topic_selection = True
+                            break
+                    
+                    if selected_topic:
+                        # Handle pronunciation practice
+                        if selected_topic == "pronunciation":
+                            response = (
+                                "Great choice! Let's work on your pronunciation. 🗣️\n\n"
+                                "I'll help you improve your pronunciation through:\n"
+                                "1. Word-by-word practice\n"
+                                "2. Sentence rhythm and intonation\n"
+                                "3. Common sound pairs\n\n"
+                                "Let's start with some common words that English learners often find challenging.\n\n"
+                                "Please say these words (you can send an audio message):\n"
+                                "- 'Think' vs 'Sink'\n"
+                                "- 'Three' vs 'Tree'\n"
+                                "- 'Ship' vs 'Sheep'\n\n"
+                                "I'll listen and give you feedback on your pronunciation!"
+                            )
+                        elif selected_topic == "daily_conversations":
+                            response = (
+                                "Let's practice daily conversations! 💬\n\n"
+                                "We'll focus on common situations like:\n"
+                                "- Ordering food\n"
+                                "- Shopping\n"
+                                "- Asking for directions\n\n"
+                                "Let's start with introductions. How would you introduce yourself to someone you just met?"
+                            )
+                        elif selected_topic == "grammar":
+                            response = (
+                                "Time to improve your grammar! 📚\n\n"
+                                "We'll work on:\n"
+                                "- Present tense\n"
+                                "- Past tense\n"
+                                "- Question formation\n\n"
+                                "Let's start with a simple exercise. Complete this sentence:\n"
+                                "Yesterday, I _____ (go) to the store."
+                            )
+                        elif selected_topic == "vocabulary":
+                            response = (
+                                "Let's expand your vocabulary! 📖\n\n"
+                                "We'll learn new words through:\n"
+                                "- Themes and categories\n"
+                                "- Context and usage\n"
+                                "- Word families\n\n"
+                                "Today's theme is 'Food and Cooking'\n"
+                                "What are some foods you like to cook?"
+                            )
+                        elif selected_topic == "writing":
+                            response = (
+                                "Let's improve your writing skills! ✍️\n\n"
+                                "We'll practice:\n"
+                                "- Sentence structure\n"
+                                "- Paragraph organization\n"
+                                "- Email writing\n\n"
+                                "Let's start with a simple task:\n"
+                                "Write 3-4 sentences about your favorite hobby."
+                            )
+                        
+                        await store_message(db, conversation, response, MessageType.OUTGOING)
+                        
+                        try:
+                            whatsapp_service.send_message(whatsapp_id, response)
+                        except WhatsAppPermissionError as e:
+                            logger.warning(f"WhatsApp permission error (expected during development): {str(e)}")
+                        except Exception as e:
+                            logger.error(f"Error sending topic response: {str(e)}")
+                        
+                        await db.commit()
+                        return JSONResponse(
+                            status_code=200,
+                            content={"status": "success", "action": "topic_selected"}
+                        )
             
-            # If no topic was selected, continue with regular conversation
-            # ... rest of the existing conversation code ...
+            # If no topic was selected or this is regular conversation, generate AI response
+            logger.info(f"Generating AI response for message: {message_text}")
+            response_text = await generate_ai_response(user, message_text, conversation, db)
+            logger.info(f"Generated AI response: {response_text[:100]}...")
+            
+            await store_message(db, conversation, response_text, MessageType.OUTGOING)
+            
+            # Check if we should respond with audio
+            recent_messages_query = select(Message).where(
+                Message.conversation_id == conversation.id
+            ).order_by(Message.timestamp.desc()).limit(5)
+            
+            recent_result = await db.execute(recent_messages_query)
+            recent_messages = recent_result.scalars().all()
+            
+            should_audio = await should_respond_with_audio(user, message_type, recent_messages)
+            logger.info(f"Should respond with audio: {should_audio}")
+            
+            try:
+                if should_audio:
+                    # Generate and send audio response
+                    logger.info("Generating audio response...")
+                    audio_url = await generate_audio_response(response_text, user)
+                    whatsapp_service.send_audio(whatsapp_id, audio_url)
+                    logger.info(f"Sent audio response: {audio_url}")
+                else:
+                    # Send text response
+                    logger.info("Sending text response...")
+                    whatsapp_service.send_message(whatsapp_id, response_text)
+                    logger.info(f"Sent text response: {response_text[:50]}...")
+                    
+            except WhatsAppPermissionError as e:
+                logger.warning(f"WhatsApp permission error (expected during development): {str(e)}")
+            except Exception as e:
+                logger.error(f"Error sending response: {str(e)}")
+            
             await db.commit()
-            return {"status": "success", "action": "message_received"}
+            return JSONResponse(
+                status_code=200,
+                content={"status": "success", "action": "conversation_processed"}
+            )
 
     except WhatsAppPermissionError as e:
         # This is expected during development
@@ -1027,4 +1085,140 @@ async def get_user_preferences(db: AsyncSession, user: User) -> dict:
         return preferences
     except Exception as e:
         logger.error(f"Error getting user preferences: {str(e)}")
-        return {'interests': set(), 'learning_style': 'visual', 'favorite_topics': set(), 'challenging_areas': set()} 
+        return {'interests': set(), 'learning_style': 'visual', 'favorite_topics': set(), 'challenging_areas': set()}
+
+async def generate_ai_response(user: User, user_message: str, conversation: Conversation, db: AsyncSession) -> str:
+    """Generate AI response using DeepSeek or OpenAI based on user context."""
+    try:
+        # Get conversation history for context
+        history_query = select(Message).where(
+            Message.conversation_id == conversation.id
+        ).order_by(Message.timestamp.desc()).limit(10)
+        
+        history_result = await db.execute(history_query)
+        history_messages = list(reversed(history_result.scalars().all()))
+        
+        # Build conversation context
+        context = f"User English Level: {user.english_level.value if user.english_level else 'Unknown'}\n\n"
+        context += "Conversation History:\n"
+        
+        for msg in history_messages[-5:]:  # Last 5 messages for context
+            role = "User" if msg.message_type == MessageType.INCOMING else "AI"
+            context += f"{role}: {msg.content}\n"
+        
+        # Create prompt for AI
+        system_prompt = f"""You are Professor AI, a friendly and professional English teacher. 
+        
+        Student Profile:
+        - English Level: {user.english_level.value if user.english_level else 'Beginner'}
+        - Learning Goals: Improve English through conversation practice
+        
+        Guidelines:
+        1. Always respond in English
+        2. Adjust your language complexity to match the student's level
+        3. Provide corrections and explanations when needed
+        4. Be encouraging and supportive
+        5. Ask follow-up questions to maintain engagement
+        6. Include practical examples and exercises when appropriate
+        7. For pronunciation topics, provide specific phonetic guidance
+        8. Keep responses concise but helpful (max 200 words)
+        
+        Current conversation context:
+        {context}
+        
+        Student's latest message: {user_message}
+        
+        Respond as Professor AI, helping the student improve their English:"""
+        
+        # Try DeepSeek first, then OpenAI as fallback
+        deepseek_key = os.getenv('DEEPSEEK_API_KEY')
+        openai_key = os.getenv('OPENAI_API_KEY')
+        
+        if deepseek_key:
+            try:
+                async with aiohttp.ClientSession() as session:
+                    headers = {
+                        "Authorization": f"Bearer {deepseek_key}",
+                        "Content-Type": "application/json"
+                    }
+                    
+                    payload = {
+                        "model": "deepseek-chat",
+                        "messages": [
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": user_message}
+                        ],
+                        "max_tokens": 300,
+                        "temperature": 0.7
+                    }
+                    
+                    async with session.post(
+                        "https://api.deepseek.com/v1/chat/completions",
+                        headers=headers,
+                        json=payload,
+                        timeout=30
+                    ) as response:
+                        if response.status == 200:
+                            result = await response.json()
+                            ai_response = result["choices"][0]["message"]["content"].strip()
+                            logger.info(f"Generated DeepSeek response: {ai_response[:100]}...")
+                            return ai_response
+                        else:
+                            error_text = await response.text()
+                            logger.error(f"DeepSeek API error: {response.status} - {error_text}")
+                            
+            except Exception as e:
+                logger.error(f"Error with DeepSeek API: {str(e)}")
+        
+        # Fallback to OpenAI
+        if openai_key:
+            try:
+                async with aiohttp.ClientSession() as session:
+                    headers = {
+                        "Authorization": f"Bearer {openai_key}",
+                        "Content-Type": "application/json"
+                    }
+                    
+                    payload = {
+                        "model": "gpt-3.5-turbo",
+                        "messages": [
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": user_message}
+                        ],
+                        "max_tokens": 300,
+                        "temperature": 0.7
+                    }
+                    
+                    async with session.post(
+                        "https://api.openai.com/v1/chat/completions",
+                        headers=headers,
+                        json=payload,
+                        timeout=30
+                    ) as response:
+                        if response.status == 200:
+                            result = await response.json()
+                            ai_response = result["choices"][0]["message"]["content"].strip()
+                            logger.info(f"Generated OpenAI response: {ai_response[:100]}...")
+                            return ai_response
+                        else:
+                            error_text = await response.text()
+                            logger.error(f"OpenAI API error: {response.status} - {error_text}")
+                            
+            except Exception as e:
+                logger.error(f"Error with OpenAI API: {str(e)}")
+        
+        # Fallback response if both APIs fail
+        level_responses = {
+            EnglishLevel.BEGINNER: "Thank you for your message! I'm here to help you learn English. Can you tell me more about what you want to practice today?",
+            EnglishLevel.ELEMENTARY: "That's interesting! I'd like to help you improve your English. What specific areas would you like to work on?",
+            EnglishLevel.INTERMEDIATE: "Great! I appreciate you sharing that with me. How can I help you practice English today? Would you like to focus on conversation, grammar, or vocabulary?",
+            EnglishLevel.ADVANCED: "Excellent! I can see you have good English skills. Let's continue our conversation and work on refining your language abilities. What topics interest you most?"
+        }
+        
+        fallback_response = level_responses.get(user.english_level, level_responses[EnglishLevel.BEGINNER])
+        logger.info(f"Using fallback response: {fallback_response}")
+        return fallback_response
+        
+    except Exception as e:
+        logger.error(f"Error generating AI response: {str(e)}", exc_info=True)
+        return "I'm sorry, I'm having trouble processing your message right now. Could you please try again?"
